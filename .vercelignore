@@ -1,0 +1,8 @@
+# Ignore backend files for Vercel (frontend only)
+backend/
+*.py
+requirements.txt
+.python-version
+render.yaml
+__pycache__/
+*.pyc
