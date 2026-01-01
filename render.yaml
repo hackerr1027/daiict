@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: techsprint-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: FRONTEND_URL
+        sync: false
+    healthCheckPath: /health

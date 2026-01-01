@@ -1,16 +1,133 @@
 """
 Text-to-Model Parser
 Converts natural language infrastructure descriptions into structured InfrastructureModel.
-Uses mock LLM JSON extraction (in production, this would call an actual LLM API).
+Now supports Google Gemini API with fallback to mock LLM.
 """
 
 import json
 import re
-from typing import Dict, Any
+import os
+from typing import Dict, Any, Optional
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Import Google Gemini (optional - graceful fallback if not available)
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+    
+    # Configure Gemini if API key is present
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if api_key:
+        genai.configure(api_key=api_key)
+        GEMINI_CONFIGURED = True
+    else:
+        GEMINI_CONFIGURED = False
+except ImportError:
+    GEMINI_AVAILABLE = False
+    GEMINI_CONFIGURED = False
+
 from .model import (
     InfrastructureModel, VPC, Subnet, EC2Instance, RDSDatabase, LoadBalancer,
     SubnetType, InstanceType, DatabaseEngine
 )
+
+
+def gemini_extract(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Use Google Gemini API to extract structured infrastructure intent from text.
+    Returns None if Gemini is not available or fails.
+    """
+    if not GEMINI_AVAILABLE or not GEMINI_CONFIGURED:
+        return None
+    
+    try:
+        # Initialize Gemini model (using gemini-pro for text)
+        model = genai.GenerativeModel('gemini-pro')
+        
+        # Craft a detailed prompt for infrastructure extraction
+        prompt = f"""You are an expert AWS infrastructure architect. Extract infrastructure requirements from the following text and return ONLY a valid JSON object with this exact structure:
+
+{{
+  "vpcs": [
+    {{
+      "id": "vpc-main",
+      "name": "main-vpc",
+      "cidr": "10.0.0.0/16",
+      "subnets": [
+        {{
+          "id": "subnet-public-1",
+          "name": "public-subnet-1",
+          "cidr": "10.0.1.0/24",
+          "type": "public",
+          "az": "us-east-1a"
+        }}
+      ]
+    }}
+  ],
+  "ec2_instances": [
+    {{
+      "id": "ec2-web-1",
+      "name": "web-server-1",
+      "instance_type": "t2.micro",
+      "subnet_id": "subnet-public-1"
+    }}
+  ],
+  "rds_databases": [
+    {{
+      "id": "rds-main",
+      "name": "main-database",
+      "engine": "postgres",
+      "instance_class": "db.t3.micro",
+      "subnet_ids": ["subnet-private-1", "subnet-private-2"],
+      "allocated_storage": 20
+    }}
+  ],
+  "load_balancers": [
+    {{
+      "id": "lb-main",
+      "name": "main-load-balancer",
+      "subnet_ids": ["subnet-public-1"],
+      "target_instance_ids": ["ec2-web-1"]
+    }}
+  ]
+}}
+
+Rules:
+1. Always create at least one VPC if infrastructure is mentioned
+2. Public subnets for internet-facing resources (EC2 web servers, load balancers)
+3. Private subnets for databases (RDS requires at least 2 subnets in different AZs)
+4. Use appropriate instance types (t2.micro, t2.small, t3.micro, etc.)
+5. Database engines: postgres, mysql, or mariadb
+6. Subnet types: "public" or "private"
+7. Return ONLY the JSON, no markdown, no explanations
+
+User request: {text}
+
+JSON output:"""
+
+        # Generate response
+        response = model.generate_content(prompt)
+        
+        # Extract JSON from response
+        response_text = response.text.strip()
+        
+        # Remove markdown code blocks if present
+        if response_text.startswith('```'):
+            response_text = re.sub(r'^```(?:json)?\n', '', response_text)
+            response_text = re.sub(r'\n```$', '', response_text)
+        
+        # Parse JSON
+        intent = json.loads(response_text)
+        
+        print(f"✅ Gemini API successfully parsed infrastructure request")
+        return intent
+        
+    except Exception as e:
+        print(f"⚠️ Gemini API failed: {str(e)}, falling back to mock LLM")
+        return None
 
 
 def mock_llm_extract(text: str) -> Dict[str, Any]:
@@ -128,12 +245,18 @@ def parse_text_to_model(text: str) -> InfrastructureModel:
     
     This is the entry point for converting natural language to our infrastructure model.
     Steps:
-    1. Use mock LLM to extract structured intent (JSON)
-    2. Build InfrastructureModel from the JSON
-    3. Return the model (which becomes the source of truth)
+    1. Try Google Gemini API first (if configured)
+    2. Fallback to mock LLM if Gemini unavailable or fails
+    3. Build InfrastructureModel from the JSON
+    4. Return the model (which becomes the source of truth)
     """
-    # Step 1: Extract intent using mock LLM
-    intent = mock_llm_extract(text)
+    # Step 1: Try Gemini API first
+    intent = gemini_extract(text)
+    
+    # Step 2: Fallback to mock LLM if Gemini failed
+    if intent is None:
+        print("ℹ️ Using mock LLM parser")
+        intent = mock_llm_extract(text)
     
     # Step 2: Build the infrastructure model
     model = InfrastructureModel()

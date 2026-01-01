@@ -6,6 +6,7 @@ Flow: Text → Parser → Model → [Diagram, Terraform, Security]
 The model is the single source of truth.
 """
 
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -27,13 +28,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Get frontend URL from environment or use wildcard
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://*.vercel.app")
+
 # Enable CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8080",      # Local development (Vite)
         "http://localhost:5173",      # Local development (Vite default)
-        "https://*.vercel.app",       # All Vercel deployments (production & preview)
+        FRONTEND_URL,                 # Production frontend (configurable)
     ],
     allow_credentials=True,
     allow_methods=["*"],

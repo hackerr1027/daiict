@@ -24,24 +24,17 @@ wheels/
 venv/
 env/
 ENV/
-Activate.ps1
-activate
-activate.bat
-deactivate.bat
-python.exe
-pythonw.exe
-pip.exe
-pip3.exe
-pip3.11.exe
-fastapi.exe
-uvicorn.exe
+*.ps1
+activate*
+deactivate*
+*.exe
 _distutils_hack/
-annotated_doc/
-annotated_doc-0.0.4.dist-info/
-annotated_types/
-annotated_types-0.7.0.dist-info/
+annotated*/
 anyio/
 extras/
+# Catch all Python package directories
+*-info/
+*.dist-info/
 
 # Node
 node_modules/
