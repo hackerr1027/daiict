@@ -31,7 +31,7 @@ except ImportError:
 
 from .model import (
     InfrastructureModel, VPC, Subnet, EC2Instance, RDSDatabase, LoadBalancer,
-    SubnetType, InstanceType, DatabaseEngine
+    SubnetType, InstanceType, DatabaseEngine, NATGateway, VPCFlowLogs
 )
 
 
@@ -241,12 +241,21 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
         elif 'mariadb' in text_lower:
             engine = "mariadb"
         
+        # IMPORTANT: Respect user's (potentially wrong) placement request
+        # so the validator can demonstrate auto-correction
+        if 'public' in text_lower and 'database' in text_lower:
+            # User wants public database (BAD PRACTICE) - validator will fix this
+            subnet_ids = ["subnet-public-1"]
+        else:
+            # Default: private subnets (BEST PRACTICE)
+            subnet_ids = ["subnet-private-1", "subnet-private-2"]
+        
         intent["rds_databases"].append({
             "id": "rds-main",
             "name": "main-database",
             "engine": engine,
             "instance_class": "db.t3.micro",
-            "subnet_ids": ["subnet-private-1", "subnet-private-2"],
+            "subnet_ids": subnet_ids,
             "allocated_storage": 20
         })
     
@@ -258,6 +267,33 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
             "subnet_ids": ["subnet-public-1"],  # LB must be in public subnet
             "target_instance_ids": ["ec2-web-1"]
         })
+    
+    # Extract NAT Gateway information
+    if 'nat' in text_lower or 'nat gateway' in text_lower or 'outbound' in text_lower:
+        # Create NAT Gateway in each public subnet for high availability
+        intent["nat_gateways"] = [
+            {
+                "id": "nat-az1",
+                "name": "nat-gateway-az1",
+                "subnet_id": "subnet-public-1"
+            }
+        ]
+        # Add second NAT for multi-AZ if mentioned
+        if 'multi' in text_lower or 'availability' in text_lower or 'ha' in text_lower:
+            intent["nat_gateways"].append({
+                "id": "nat-az2",
+                "name": "nat-gateway-az2",
+                "subnet_id": "subnet-public-2"
+            })
+    
+    # Extract VPC Flow Logs information
+    if 'flow log' in text_lower or 'monitoring' in text_lower or 'network monitoring' in text_lower:
+        intent["flow_logs"] = [{
+            "id": "flow-logs-main",
+            "vpc_id": "vpc-main",
+            "log_destination_type": "cloud-watch-logs",
+            "traffic_type": "ALL"
+        }]
     
     return intent
 
@@ -336,5 +372,26 @@ def parse_text_to_model(text: str) -> InfrastructureModel:
             target_instance_ids=lb_data.get("target_instance_ids", [])
         )
         model.add_load_balancer(lb)
+    
+    # Add NAT Gateways
+    for nat_data in intent.get("nat_gateways", []):
+        nat = NATGateway(
+            id=nat_data["id"],
+            name=nat_data["name"],
+            subnet_id=nat_data["subnet_id"],
+            elastic_ip=nat_data.get("elastic_ip")
+        )
+        model.add_nat_gateway(nat)
+    
+    # Add VPC Flow Logs
+    for fl_data in intent.get("flow_logs", []):
+        flow_logs = VPCFlowLogs(
+            id=fl_data["id"],
+            vpc_id=fl_data["vpc_id"],
+            log_destination_type=fl_data.get("log_destination_type", "cloud-watch-logs"),
+            traffic_type=fl_data.get("traffic_type", "ALL"),
+            log_group_name=fl_data.get("log_group_name")
+        )
+        model.add_flow_logs(flow_logs)
     
     return model

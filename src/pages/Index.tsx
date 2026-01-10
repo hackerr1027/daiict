@@ -335,6 +335,11 @@ export default function Index() {
     setWarnings(response.warnings);
     setCorrections(response.corrections || []); // Store architecture corrections
 
+    // DEBUG: Log corrections to help diagnose display issue
+    console.log('🔧 Corrections received:', response.corrections);
+    console.log('🔧 Corrections array length:', (response.corrections || []).length);
+    console.log('🔧 Corrections state will be set to:', response.corrections || []);
+
     // Extract model ID
     const extractedModelId = response.modelId;
     console.log('Extracted modelId:', extractedModelId);

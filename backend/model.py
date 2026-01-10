@@ -136,6 +136,29 @@ class SecurityGroup:
     egress_rules: List[Dict] = field(default_factory=list)
 
 
+@dataclass
+class NATGateway:
+    """Represents a NAT Gateway for private subnet internet access"""
+    id: str
+    name: str
+    subnet_id: str  # Must be a public subnet
+    elastic_ip: Optional[str] = None  # EIP allocation ID
+    
+    def __post_init__(self):
+        """Validate NAT Gateway configuration"""
+        if not self.subnet_id:
+            raise ValueError("NAT Gateway must be in a subnet")
+
+
+@dataclass
+class VPCFlowLogs:
+    """Represents VPC Flow Logs for network monitoring"""
+    id: str
+    vpc_id: str
+    log_destination_type: str = "cloud-watch-logs"  # or "s3"
+    traffic_type: str = "ALL"  # ALL, ACCEPT, or REJECT
+    log_group_name: Optional[str] = None
+
 
 @dataclass
 class VPC:
@@ -167,6 +190,8 @@ class InfrastructureModel:
     load_balancers: List[LoadBalancer] = field(default_factory=list)
     s3_buckets: List[S3Bucket] = field(default_factory=list)
     security_groups: List[SecurityGroup] = field(default_factory=list)
+    nat_gateways: List[NATGateway] = field(default_factory=list)
+    flow_logs: List[VPCFlowLogs] = field(default_factory=list)
     
     # Edit tracking fields
     last_edit_source: EditSource = EditSource.INITIAL
@@ -196,6 +221,14 @@ class InfrastructureModel:
     def add_security_group(self, sg: SecurityGroup):
         """Add a security group to the model"""
         self.security_groups.append(sg)
+    
+    def add_nat_gateway(self, nat: NATGateway):
+        """Add a NAT Gateway to the model"""
+        self.nat_gateways.append(nat)
+    
+    def add_flow_logs(self, logs: VPCFlowLogs):
+        """Add VPC Flow Logs to the model"""
+        self.flow_logs.append(logs)
     
     def get_subnet_by_id(self, subnet_id: str) -> Optional[Subnet]:
         """Find a subnet by ID across all VPCs"""
@@ -284,5 +317,22 @@ class InfrastructureModel:
                     "ingress_rules": sg.ingress_rules,
                     "egress_rules": sg.egress_rules
                 } for sg in self.security_groups
+            ],
+            "nat_gateways": [
+                {
+                    "id": nat.id,
+                    "name": nat.name,
+                    "subnet_id": nat.subnet_id,
+                    "elastic_ip": nat.elastic_ip
+                } for nat in self.nat_gateways
+            ],
+            "flow_logs": [
+                {
+                    "id": fl.id,
+                    "vpc_id": fl.vpc_id,
+                    "log_destination_type": fl.log_destination_type,
+                    "traffic_type": fl.traffic_type,
+                    "log_group_name": fl.log_group_name
+                } for fl in self.flow_logs
             ]
         }

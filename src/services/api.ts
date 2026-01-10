@@ -63,6 +63,8 @@ export async function generateFromText(text: string): Promise<InfrastructureResp
   const data = await response.json();
 
   console.log('Backend response received, model_id:', data.model_id);
+  console.log('🔍 RAW BACKEND RESPONSE:', data);
+  console.log('🔍 data.corrections:', data.corrections);
 
   const mappedWarnings = (data.security_warnings || []).map((w: any) => ({
     ...w,
