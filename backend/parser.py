@@ -148,10 +148,18 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
         "load_balancers": []
     }
     
-    # Extract VPC information
-    vpc_match = re.search(r'vpc.*?(\d+\.\d+\.\d+\.\d+/\d+)', text_lower)
-    if vpc_match or 'vpc' in text_lower:
+    # CRITICAL: Always create a VPC if ANY infrastructure is mentioned
+    # This follows AWS best practices - all resources must be in a VPC
+    needs_infrastructure = any(keyword in text_lower for keyword in [
+        'ec2', 'instance', 'server', 'rds', 'database', 'load balancer', 
+        'alb', 'elb', 'web', 'application', 'infrastructure'
+    ])
+    
+    if needs_infrastructure:
+        # Extract VPC CIDR if specified
+        vpc_match = re.search(r'(\d+\.\d+\.\d+\.\d+/\d+)', text_lower)
         vpc_cidr = vpc_match.group(1) if vpc_match else "10.0.0.0/16"
+        
         vpc = {
             "id": "vpc-main",
             "name": "main-vpc",
@@ -159,8 +167,21 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
             "subnets": []
         }
         
-        # Extract subnet information
-        if 'public subnet' in text_lower or 'public' in text_lower:
+        # Determine if we need public and/or private subnets
+        needs_public = any(keyword in text_lower for keyword in [
+            'public', 'load balancer', 'alb', 'elb', 'internet-facing', 'web'
+        ])
+        needs_private = any(keyword in text_lower for keyword in [
+            'private', 'database', 'rds', 'internal', 'backend'
+        ])
+        
+        # If neither explicitly mentioned, create both (best practice)
+        if not needs_public and not needs_private:
+            needs_public = True
+            needs_private = True
+        
+        # Add public subnet (for load balancers, bastion hosts)
+        if needs_public:
             vpc["subnets"].append({
                 "id": "subnet-public-1",
                 "name": "public-subnet-1",
@@ -169,7 +190,8 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
                 "az": "us-east-1a"
             })
         
-        if 'private subnet' in text_lower or 'private' in text_lower:
+        # Add private subnets (for EC2 app servers, databases)
+        if needs_private:
             vpc["subnets"].append({
                 "id": "subnet-private-1",
                 "name": "private-subnet-1",
@@ -189,7 +211,7 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
         intent["vpcs"].append(vpc)
     
     # Extract EC2 information
-    if 'ec2' in text_lower or 'instance' in text_lower or 'server' in text_lower:
+    if 'ec2' in text_lower or 'instance' in text_lower or 'server' in text_lower or 'web' in text_lower:
         instance_type = "t2.micro"
         if 't2.small' in text_lower:
             instance_type = "t2.small"
@@ -198,10 +220,11 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
         elif 't3' in text_lower:
             instance_type = "t3.small"
         
-        # Determine which subnet (public by default, private if specified)
-        subnet_id = "subnet-public-1"
-        if 'private' in text_lower and 'ec2' in text_lower:
-            subnet_id = "subnet-private-1"
+        # Place EC2 in PRIVATE subnet by default (best practice)
+        # Only use public if explicitly mentioned or if it's a bastion/jump host
+        subnet_id = "subnet-private-1"
+        if 'public' in text_lower and ('ec2' in text_lower or 'bastion' in text_lower):
+            subnet_id = "subnet-public-1"
         
         intent["ec2_instances"].append({
             "id": "ec2-web-1",
@@ -228,11 +251,11 @@ def mock_llm_extract(text: str) -> Dict[str, Any]:
         })
     
     # Extract Load Balancer information
-    if 'load balancer' in text_lower or 'alb' in text_lower or 'elb' in text_lower:
+    if 'load balancer' in text_lower or 'alb' in text_lower or 'elb' in text_lower or ('web' in text_lower and 'application' in text_lower):
         intent["load_balancers"].append({
             "id": "lb-main",
             "name": "main-load-balancer",
-            "subnet_ids": ["subnet-public-1"],
+            "subnet_ids": ["subnet-public-1"],  # LB must be in public subnet
             "target_instance_ids": ["ec2-web-1"]
         })
     

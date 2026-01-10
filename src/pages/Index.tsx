@@ -131,6 +131,7 @@ export default function Index() {
   const [originalTerraform, setOriginalTerraform] = useState(''); // Track original for diff
   const [currentModelId, setCurrentModelId] = useState<string | null>(null); // Track model ID for edits
   const [warnings, setWarnings] = useState<Warning[]>([]);
+  const [corrections, setCorrections] = useState<string[]>([]); // Architecture auto-corrections
   const [isHealthy, setIsHealthy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error'>('synced');
   const [isLoading, setIsLoading] = useState(false);
@@ -278,7 +279,8 @@ export default function Index() {
         });
         const response = await editTerraform(currentModelId, originalTerraform, terraform);
         console.log('Terraform edit response:', response);
-        updateInfrastructure(response);
+        // CRITICAL FIX: Skip terraform update to preserve user's exact edits
+        updateInfrastructure(response, { skipTerraformUpdate: true });
         toast({
           title: 'Changes Applied',
           description: 'Infrastructure updated from Terraform code.',
@@ -303,7 +305,10 @@ export default function Index() {
   }, [currentModelId, isHealthy, originalTerraform, terraform, toast]);
 
   // Update all infrastructure state from response
-  const updateInfrastructure = (response: InfrastructureResponse) => {
+  const updateInfrastructure = (
+    response: InfrastructureResponse,
+    options: { skipTerraformUpdate?: boolean } = {}
+  ) => {
     console.log('=== updateInfrastructure START ===');
     console.log('Full response:', response);
     console.log('Response keys:', Object.keys(response));
@@ -311,13 +316,26 @@ export default function Index() {
     console.log('response.diagram length:', response.diagram?.length);
     console.log('response.terraform length:', response.terraform?.length);
     console.log('response.warnings count:', response.warnings?.length);
+    console.log('response.corrections count:', response.corrections?.length);
+    console.log('skipTerraformUpdate:', options.skipTerraformUpdate);
 
     setDiagram(response.diagram);
-    setTerraform(response.terraform);
-    setOriginalTerraform(response.terraform);
-    setWarnings(response.warnings);
 
-    // Extract model ID - try multiple sources
+    // CRITICAL FIX: Only update terraform state if not applying terraform changes
+    // This preserves user's exact edits in the editor
+    if (!options.skipTerraformUpdate) {
+      setTerraform(response.terraform);
+      setOriginalTerraform(response.terraform);
+    } else {
+      // When applying terraform changes, only update originalTerraform for future diffs
+      // Keep current terraform state to preserve user's edits
+      setOriginalTerraform(terraform);
+    }
+
+    setWarnings(response.warnings);
+    setCorrections(response.corrections || []); // Store architecture corrections
+
+    // Extract model ID
     const extractedModelId = response.modelId;
     console.log('Extracted modelId:', extractedModelId);
 
@@ -349,7 +367,7 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background bg-animated-gradient noise">
+    <div className="h-screen flex flex-col bg-background bg-animated-gradient noise overflow-hidden">
       {/* Animated network particles */}
       <NetworkParticles />
 
@@ -386,7 +404,7 @@ export default function Index() {
       {/* Main Content - Three Panels */}
       <main className="relative z-10 flex-1 flex overflow-hidden">
         {/* Left Panel - Text Input */}
-        <div className="w-80 flex-shrink-0 border-r border-border/50 flex flex-col glass animate-slide-in-left">
+        <div className="w-80 border-r border-border/50 flex flex-col glass animate-slide-in-left">{/* CRITICAL: Removed flex-shrink-0 */}
           <div className="flex items-center gap-3 px-4 py-4 border-b border-border/50 bg-panel-header/50">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 border border-primary/20">
               <Sparkles className="w-4 h-4 text-primary" />
@@ -430,7 +448,34 @@ export default function Index() {
               </span>
             </Button>
 
-            <DiagramControls onEdit={handleDiagramEdit} disabled={!isHealthy || isLoading} />
+            <DiagramControls
+              onEdit={handleDiagramEdit}
+              disabled={!isHealthy || isLoading}
+              currentDiagram={diagram}
+            />
+
+            {/* Architecture Corrections Panel */}
+            {corrections.length > 0 && (
+              <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 animate-fade-in">
+                <div className="flex items-start gap-2 mb-2">
+                  <div className="flex items-center justify-center w-5 h-5 rounded bg-primary/20 border border-primary/30 flex-shrink-0 mt-0.5">
+                    <Check className="w-3 h-3 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-foreground">Architecture Auto-Corrections</h3>
+                    <p className="text-xs text-muted-foreground">Best practices enforced</p>
+                  </div>
+                </div>
+                <ul className="space-y-1.5 text-xs text-foreground/80">
+                  {corrections.map((correction, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-primary mt-0.5">•</span>
+                      <span>{correction}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 
@@ -446,13 +491,13 @@ export default function Index() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto bg-background/30 scanlines">
-            <MermaidDiagram code={diagram} className="min-h-full" />
+          <div className="flex-1 overflow-hidden bg-background/30 scanlines">
+            <MermaidDiagram code={diagram} className="w-full h-full" />
           </div>
         </div>
 
         {/* Right Panel - Terraform Code */}
-        <div className="w-[480px] flex-shrink-0 flex flex-col glass animate-slide-in-right">
+        <div className="w-[480px] flex flex-col glass animate-slide-in-right">{/* CRITICAL: Removed flex-shrink-0 */}
           <div className="flex items-center justify-between px-4 py-4 border-b border-border/50 bg-panel-header/50">
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 border border-primary/20">

@@ -204,6 +204,12 @@ def remove_resource(model: InfrastructureModel, resource_id: str,
         if not removed:
             return EditResult(False, None, [], f"Resource {resource_id} not found")
         
+        # CRITICAL FIX: Clean up dangling references to deleted resource
+        # If we deleted an EC2 instance, remove it from load balancer targets
+        for lb in model_copy.load_balancers:
+            if resource_id in lb.target_instance_ids:
+                lb.target_instance_ids.remove(resource_id)
+        
         # Validate security (might expose new issues)
         warnings = validate_security(model_copy)
         
@@ -252,7 +258,7 @@ def move_resource(model: InfrastructureModel, resource_id: str,
                     break
         
         if not moved:
-            return EditResult(False, None, [], f"Resource {resource_id} not found or not movable")
+            return EditResult(False, None, [], f"Resource {resource_id} not found. It may have been deleted.")
         
         # CRITICAL: Validate security after move
         warnings = validate_security(model_copy)

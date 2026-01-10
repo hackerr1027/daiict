@@ -16,6 +16,7 @@ from .parser import parse_text_to_model
 from .diagram import generate_mermaid_diagram, generate_diagram_description
 from .terraform import generate_terraform_code
 from .security import validate_security, generate_security_report
+from .validator import validate_and_fix
 from .model import EditSource
 from .edits import add_resource, remove_resource, move_resource, update_resource_property
 from .terraform_parser import parse_terraform_edits
@@ -68,6 +69,7 @@ class InfrastructureResponse(BaseModel):
     security_report: str
     model_summary: Dict[str, Any]
     model_id: str
+    corrections: List[str] = []  # Architecture auto-corrections applied
 
 
 class DiagramEditRequest(BaseModel):
@@ -140,21 +142,24 @@ def generate_infrastructure(request: TextRequest):
         # This is where AI/LLM is used (mock for now)
         model = parse_text_to_model(request.text)
         
-        # Step 2: Generate Mermaid diagram from model
+        # Step 2: VALIDATE AND AUTO-FIX (Architecture Compiler)
+        model, validation_result = validate_and_fix(model)
+        
+        # Step 3: Generate Mermaid diagram from validated model
         mermaid_diagram = generate_mermaid_diagram(model)
         diagram_desc = generate_diagram_description(model)
         
-        # Step 3: Generate Terraform code from model
+        # Step 4: Generate Terraform code from validated model
         terraform_code = generate_terraform_code(model)
         
-        # Step 4: Validate security at model level
+        # Step 5: Validate security at model level
         security_warnings = validate_security(model)
         security_report = generate_security_report(security_warnings)
         
         # Store model for edit operations
         MODEL_STORE[model.model_id] = model
         
-        # Step 5: Return combined response
+        # Step 6: Return combined response with corrections
         return InfrastructureResponse(
             success=True,
             description=diagram_desc,
@@ -163,7 +168,8 @@ def generate_infrastructure(request: TextRequest):
             security_warnings=[w.to_dict() for w in security_warnings],
             security_report=security_report,
             model_summary=model.to_dict(),
-            model_id=model.model_id  # ADD THIS - include model_id in response
+            model_id=model.model_id,
+            corrections=validation_result.corrections  # Architecture auto-corrections
         )
     
     except Exception as e:
@@ -249,6 +255,7 @@ def edit_via_diagram(request: DiagramEditRequest):
         return {
             "success": True,
             "model_id": updated_model.model_id,
+            "model_summary": updated_model.to_dict(),  # CRITICAL: Frontend needs this for React Flow
             "mermaid_diagram": mermaid_diagram,
             "terraform_code": terraform_code,
             "security_warnings": [w.to_dict() for w in result.warnings],
@@ -302,8 +309,9 @@ def edit_via_terraform(request: TerraformEditRequest):
         # Store updated model
         MODEL_STORE[working_model.model_id] = working_model
         
-        # Regenerate diagram only (Terraform edit source)
+        # Regenerate both diagram AND Terraform (so code doesn't disappear)
         mermaid_diagram = generate_mermaid_diagram(working_model)
+        terraform_code = generate_terraform_code(working_model)  # CRITICAL FIX: Regenerate Terraform
         diagram_desc = generate_diagram_description(working_model)
         security_report = generate_security_report(all_warnings)
         
@@ -311,6 +319,7 @@ def edit_via_terraform(request: TerraformEditRequest):
             "success": True,
             "model_id": working_model.model_id,
             "mermaid_diagram": mermaid_diagram,
+            "terraform_code": terraform_code,  # CRITICAL FIX: Include in response
             "description": diagram_desc,
             "security_warnings": [w.to_dict() for w in all_warnings],
             "security_report": security_report,

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Minus, Move, Server, Database, Globe, Shield, Box, Settings2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Trash2, MoveHorizontal, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -11,35 +11,78 @@ import {
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
-import type { DiagramEditEvent } from '@/services/api';
+import { type DiagramEditEvent } from '@/services/api';
 
 interface DiagramControlsProps {
   onEdit: (event: DiagramEditEvent) => void;
   disabled?: boolean;
+  currentDiagram?: string; // NEW: Pass diagram to extract resource IDs
 }
 
 const resourceTypes = [
-  { value: 'ec2', label: 'EC2 Instance', icon: Server, description: 'Virtual server in the cloud', color: 'text-info' },
-  { value: 'rds', label: 'RDS Database', icon: Database, description: 'Managed relational database', color: 'text-accent' },
-  { value: 'elb', label: 'Load Balancer', icon: Globe, description: 'Distributes incoming traffic', color: 'text-success' },
-  { value: 's3', label: 'S3 Bucket', icon: Box, description: 'Object storage service', color: 'text-warning' },
-  { value: 'security_group', label: 'Security Group', icon: Shield, description: 'Virtual firewall for resources', color: 'text-destructive' },
+  { value: 'ec2', label: 'EC2 Instance', icon: '🖥️' },
+  { value: 'rds', label: 'RDS Database', icon: '🗄️' },
+  { value: 'load_balancer', label: 'Load Balancer', icon: '⚖️' },
+  { value: 's3', label: 'S3 Bucket', icon: '🪣' },
+  { value: 'security_group', label: 'Security Group', icon: '🛡️' },
 ];
 
 const subnetOptions = [
-  { value: 'public', label: 'Public Subnet', color: 'bg-success/20 text-success' },
-  { value: 'private', label: 'Private Subnet', color: 'bg-warning/20 text-warning' },
-  { value: 'database', label: 'Database Subnet', color: 'bg-accent/20 text-accent' },
+  { value: 'subnet-public-1', label: 'Public Subnet', color: 'bg-success/20 text-success' },
+  { value: 'subnet-private-1', label: 'Private Subnet', color: 'bg-warning/20 text-warning' },
+  { value: 'subnet-private-2', label: 'Private Subnet 2', color: 'bg-warning/20 text-warning' },
 ];
 
-export function DiagramControls({ onEdit, disabled = false }: DiagramControlsProps) {
+// Extract resource IDs from Mermaid diagram
+function extractResourceIds(diagram: string): { id: string; type: string; label: string }[] {
+  if (!diagram) return [];
+
+  const resources: { id: string; type: string; label: string }[] = [];
+  const lines = diagram.split('\n');
+
+  for (const line of lines) {
+    // Match patterns like: ec2-web-1["🖥️ web-server-1<br/>ID: ec2-web-1<br/>t2.micro"]
+    const match = line.match(/(\w+-[\w-]+)\["([^"]+)"/);
+    if (match) {
+      const id = match[1];
+      const label = match[2].replace(/<br\/>/g, ' ').replace(/ID:\s*/g, '');
+
+      let type = 'unknown';
+      if (id.startsWith('ec2-')) type = 'EC2';
+      else if (id.startsWith('rds-')) type = 'RDS';
+      else if (id.startsWith('lb-')) type = 'Load Balancer';
+      else if (id.startsWith('s3-')) type = 'S3';
+      else if (id.startsWith('sg-')) type = 'Security Group';
+
+      resources.push({ id, type, label });
+    }
+  }
+
+  return resources;
+}
+
+export function DiagramControls({ onEdit, disabled = false, currentDiagram }: DiagramControlsProps) {
   const [selectedResource, setSelectedResource] = useState('ec2');
   const [resourceId, setResourceId] = useState('');
-  const [targetSubnet, setTargetSubnet] = useState('public');
+  const [targetSubnet, setTargetSubnet] = useState('subnet-public-1');
   const [activeAction, setActiveAction] = useState<'add' | 'remove' | 'move' | null>(null);
+
+  // Extract available resources from diagram
+  const availableResources = extractResourceIds(currentDiagram || '');
+  const movableResources = availableResources.filter(r => r.type === 'EC2' || r.type === 'RDS');
+
+  // CRITICAL FIX: Reset resourceId if it no longer exists in the updated diagram
+  // This prevents operations on deleted resources
+  useEffect(() => {
+    if (resourceId && !availableResources.find(r => r.id === resourceId)) {
+      setResourceId(''); // Clear stale resource ID
+      setActiveAction(null); // Reset active action
+    }
+  }, [currentDiagram, resourceId, availableResources]);
 
   // Helper function to get default properties for each resource type
   const getDefaultProperties = (resourceType: string): Record<string, any> => {
@@ -74,6 +117,17 @@ export function DiagramControls({ onEdit, disabled = false }: DiagramControlsPro
 
   const handleAction = (action: 'add' | 'remove' | 'move') => {
     if (activeAction === action) {
+      // CRITICAL FIX: Validate resource exists before operating on it
+      if ((action === 'remove' || action === 'move') && resourceId) {
+        const resourceExists = availableResources.find(r => r.id === resourceId);
+        if (!resourceExists) {
+          console.error(`Resource ${resourceId} not found in current diagram`);
+          setResourceId('');
+          setActiveAction(null);
+          return; // Abort operation
+        }
+      }
+
       const event: DiagramEditEvent = {
         action,
         resourceType: selectedResource,
@@ -89,81 +143,32 @@ export function DiagramControls({ onEdit, disabled = false }: DiagramControlsPro
     }
   };
 
-  const selectedResourceInfo = resourceTypes.find(r => r.value === selectedResource);
-
   return (
-    <div className="flex flex-col gap-4 p-4 bg-secondary/20 rounded-xl border border-border/50 hover:border-primary/30 transition-all duration-300">
-      <div className="flex items-center gap-2">
-        <div className="flex items-center justify-center w-6 h-6 rounded-md bg-primary/10 border border-primary/20">
-          <Settings2 className="w-3.5 h-3.5 text-primary" />
+    <div className="space-y-4 p-4 rounded-lg border border-border/50 bg-panel-bg/50 glass">
+      <div className="flex items-center gap-2 pb-2 border-b border-border/30">
+        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 border border-primary/20">
+          <MoveHorizontal className="w-4 h-4 text-primary" />
         </div>
-        <span className="text-sm font-semibold text-foreground">Diagram Controls</span>
-        <Tooltip>
-          <TooltipTrigger>
-            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-muted text-muted-foreground cursor-help">?</span>
-          </TooltipTrigger>
-          <TooltipContent className="glass-strong border-primary/20 max-w-[250px]">
-            <p className="text-sm">Modify your infrastructure visually. Changes sync with Terraform automatically.</p>
-          </TooltipContent>
-        </Tooltip>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Diagram Controls</h3>
+          <p className="text-xs text-muted-foreground">Add, remove, or move resources</p>
+        </div>
       </div>
 
-      {/* Resource Type Selector */}
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Resource Type</label>
-        <Select value={selectedResource} onValueChange={setSelectedResource} disabled={disabled}>
-          <SelectTrigger className="w-full bg-background/50 border-border/50 hover:border-primary/30 transition-all duration-300">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="glass-strong border-primary/20">
-            {resourceTypes.map(resource => {
-              const Icon = resource.icon;
-              return (
-                <SelectItem key={resource.value} value={resource.value} className="focus:bg-primary/10">
-                  <div className="flex items-center gap-3">
-                    <Icon className={`w-4 h-4 ${resource.color}`} />
-                    <span className="font-medium">{resource.label}</span>
-                  </div>
-                </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
-        {selectedResourceInfo && (
-          <p className="text-xs text-muted-foreground flex items-center gap-2">
-            <selectedResourceInfo.icon className={`w-3 h-3 ${selectedResourceInfo.color}`} />
-            {selectedResourceInfo.description}
-          </p>
-        )}
-      </div>
-
-      {/* Resource ID for remove/move */}
-      {(activeAction === 'remove' || activeAction === 'move') && (
+      {/* Resource Type Selection for Add */}
+      {activeAction === 'add' && (
         <div className="space-y-2 animate-fade-in">
-          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Resource ID</label>
-          <Input
-            placeholder="e.g., web-server-1"
-            value={resourceId}
-            onChange={(e) => setResourceId(e.target.value)}
-            disabled={disabled}
-            className="bg-background/50 border-border/50 focus:border-primary/50 transition-all duration-300"
-          />
-        </div>
-      )}
-
-      {/* Target Subnet for move */}
-      {activeAction === 'move' && (
-        <div className="space-y-2 animate-fade-in">
-          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Target Subnet</label>
-          <Select value={targetSubnet} onValueChange={setTargetSubnet} disabled={disabled}>
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Resource Type</label>
+          <Select value={selectedResource} onValueChange={setSelectedResource} disabled={disabled}>
             <SelectTrigger className="w-full bg-background/50 border-border/50 hover:border-primary/30 transition-all duration-300">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="glass-strong border-primary/20">
-              {subnetOptions.map(subnet => (
-                <SelectItem key={subnet.value} value={subnet.value} className="focus:bg-primary/10">
-                  <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${subnet.color}`}>
-                    {subnet.label}
+              {resourceTypes.map(type => (
+                <SelectItem key={type.value} value={type.value} className="focus:bg-primary/10">
+                  <span className="flex items-center gap-2">
+                    <span>{type.icon}</span>
+                    <span>{type.label}</span>
                   </span>
                 </SelectItem>
               ))}
@@ -172,66 +177,182 @@ export function DiagramControls({ onEdit, disabled = false }: DiagramControlsPro
         </div>
       )}
 
+      {/* Resource ID Input for Remove */}
+      {activeAction === 'remove' && (
+        <div className="space-y-2 animate-fade-in">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+            Resource ID
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Info className="w-3 h-3" />
+                </TooltipTrigger>
+                <TooltipContent className="glass-strong border-primary/20 max-w-xs">
+                  <p className="text-xs">Copy the ID from the diagram (e.g., ec2-web-1, rds-main)</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </label>
+          {availableResources.length > 0 ? (
+            <Select value={resourceId} onValueChange={setResourceId} disabled={disabled}>
+              <SelectTrigger className="w-full bg-background/50 border-border/50 hover:border-primary/30 transition-all duration-300">
+                <SelectValue placeholder="Select resource to remove" />
+              </SelectTrigger>
+              <SelectContent className="glass-strong border-primary/20">
+                {availableResources.map(resource => (
+                  <SelectItem key={resource.id} value={resource.id} className="focus:bg-primary/10">
+                    <span className="flex items-center gap-2 text-xs">
+                      <span className="px-1.5 py-0.5 rounded bg-destructive/20 text-destructive font-mono">{resource.id}</span>
+                      <span className="text-muted-foreground">{resource.type}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              placeholder="e.g., ec2-web-1"
+              value={resourceId}
+              onChange={(e: any) => setResourceId(e.target.value)}
+              disabled={disabled}
+              className="bg-background/50 border-border/50 focus:border-primary/50 transition-all duration-300 font-mono text-sm"
+            />
+          )}
+        </div>
+      )}
+
+      {/* Resource ID Selection for Move */}
+      {activeAction === 'move' && (
+        <>
+          <div className="space-y-2 animate-fade-in">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+              Resource to Move
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Info className="w-3 h-3" />
+                  </TooltipTrigger>
+                  <TooltipContent className="glass-strong border-primary/20 max-w-xs">
+                    <p className="text-xs">Only EC2 and RDS resources can be moved between subnets</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </label>
+            {movableResources.length > 0 ? (
+              <Select value={resourceId} onValueChange={setResourceId} disabled={disabled}>
+                <SelectTrigger className="w-full bg-background/50 border-border/50 hover:border-primary/30 transition-all duration-300">
+                  <SelectValue placeholder="Select resource to move" />
+                </SelectTrigger>
+                <SelectContent className="glass-strong border-primary/20">
+                  {movableResources.map(resource => (
+                    <SelectItem key={resource.id} value={resource.id} className="focus:bg-primary/10">
+                      <span className="flex items-center gap-2 text-xs">
+                        <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-mono">{resource.id}</span>
+                        <span className="text-muted-foreground">{resource.type}</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                placeholder="e.g., ec2-web-1"
+                value={resourceId}
+                onChange={(e: any) => setResourceId(e.target.value)}
+                disabled={disabled}
+                className="bg-background/50 border-border/50 focus:border-primary/50 transition-all duration-300 font-mono text-sm"
+              />
+            )}
+          </div>
+
+          <div className="space-y-2 animate-fade-in">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Target Subnet</label>
+            <Select value={targetSubnet} onValueChange={setTargetSubnet} disabled={disabled}>
+              <SelectTrigger className="w-full bg-background/50 border-border/50 hover:border-primary/30 transition-all duration-300">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="glass-strong border-primary/20">
+                {subnetOptions.map(subnet => (
+                  <SelectItem key={subnet.value} value={subnet.value} className="focus:bg-primary/10">
+                    <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${subnet.color}`}>
+                      {subnet.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
+
       {/* Action Buttons */}
-      <div className="flex gap-2 mt-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={activeAction === 'add' ? 'generate' : 'panel'}
-              size="sm"
-              onClick={() => handleAction('add')}
-              disabled={disabled}
-              className="flex-1 group"
-            >
-              <Plus className={`w-4 h-4 transition-transform duration-300 ${activeAction === 'add' ? 'rotate-45' : 'group-hover:scale-110'}`} />
-              {activeAction === 'add' ? 'Confirm' : 'Add'}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className="glass-strong border-primary/20">Add a new resource</TooltipContent>
-        </Tooltip>
+      <div className="grid grid-cols-3 gap-2 pt-2">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={activeAction === 'add' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => handleAction('add')}
+                disabled={disabled}
+                className="w-full transition-all duration-300 hover:scale-105"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                {activeAction === 'add' ? 'Confirm' : 'Add'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="glass-strong border-primary/20">
+              <p className="text-xs">Add a new resource to the infrastructure</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={activeAction === 'remove' ? 'destructive' : 'panel'}
-              size="sm"
-              onClick={() => handleAction('remove')}
-              disabled={disabled}
-              className="flex-1 group"
-            >
-              <Minus className={`w-4 h-4 transition-transform duration-300 ${activeAction === 'remove' ? 'scale-125' : 'group-hover:scale-110'}`} />
-              {activeAction === 'remove' ? 'Confirm' : 'Remove'}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className="glass-strong border-primary/20">Remove a resource</TooltipContent>
-        </Tooltip>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={activeAction === 'remove' ? 'destructive' : 'outline'}
+                size="sm"
+                onClick={() => handleAction('remove')}
+                disabled={disabled}
+                className="w-full transition-all duration-300 hover:scale-105"
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                {activeAction === 'remove' ? 'Confirm' : 'Remove'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="glass-strong border-primary/20">
+              <p className="text-xs">Remove an existing resource</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={activeAction === 'move' ? 'apply' : 'panel'}
-              size="sm"
-              onClick={() => handleAction('move')}
-              disabled={disabled}
-              className="flex-1 group"
-            >
-              <Move className={`w-4 h-4 transition-transform duration-300 ${activeAction === 'move' ? 'translate-x-1' : 'group-hover:scale-110'}`} />
-              {activeAction === 'move' ? 'Confirm' : 'Move'}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className="glass-strong border-primary/20">Move to another subnet</TooltipContent>
-        </Tooltip>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={activeAction === 'move' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => handleAction('move')}
+                disabled={disabled}
+                className="w-full transition-all duration-300 hover:scale-105"
+              >
+                <MoveHorizontal className="w-4 h-4 mr-1" />
+                {activeAction === 'move' ? 'Confirm' : 'Move'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="glass-strong border-primary/20">
+              <p className="text-xs">Move a resource between subnets</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
-      {activeAction && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setActiveAction(null)}
-          className="text-muted-foreground hover:text-foreground hover:bg-destructive/10 transition-all duration-300"
-        >
-          Cancel
-        </Button>
+      {/* Helper text */}
+      {movableResources.length === 0 && activeAction === 'move' && (
+        <p className="text-xs text-warning bg-warning/10 border border-warning/20 rounded px-2 py-1.5 animate-fade-in">
+          ⚠️ Generate infrastructure first to see movable resources
+        </p>
       )}
     </div>
   );

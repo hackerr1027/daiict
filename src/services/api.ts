@@ -7,7 +7,9 @@ export interface InfrastructureResponse {
   diagram: string;
   terraform: string;
   warnings: Warning[];
+  corrections?: string[]; // Architecture auto-corrections
   modelId?: string;
+  model?: any; // Infrastructure model JSON
 }
 
 export interface Warning {
@@ -71,7 +73,9 @@ export async function generateFromText(text: string): Promise<InfrastructureResp
     diagram: data.mermaid_diagram,
     terraform: data.terraform_code,
     warnings: mappedWarnings,
+    corrections: data.corrections || [], // Architecture auto-corrections
     modelId: data.model_id,
+    model: data.model_summary, // Extract model JSON
   };
 }
 
@@ -137,6 +141,7 @@ export async function editDiagram(
     terraform: data.terraform_code || '',
     warnings: mappedWarnings,
     modelId: data.model_id,
+    model: data.model_summary,
   };
 }
 
@@ -172,5 +177,7 @@ export async function editTerraform(
     terraform: data.terraform_code || '',
     warnings: mappedWarnings,
     modelId: data.model_id,
+    model: data.model_summary,
   };
 }
+
