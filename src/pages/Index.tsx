@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Cloud, Zap, Code2, Shield, ChevronDown, ChevronUp, Send, RotateCw, Download, Sparkles, Terminal, Cpu, Check } from 'lucide-react';
+import { Cloud, Zap, Code2, Shield, ChevronDown, ChevronUp, Send, RotateCw, Download, Sparkles, Terminal, Cpu, Check, Image as ImageIcon, FileImage } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -8,6 +8,13 @@ import { WarningsPanel } from '@/components/WarningsPanel';
 import { DiagramControls } from '@/components/DiagramControls';
 import { StatusIndicator } from '@/components/StatusIndicator';
 import { NetworkParticles } from '@/components/NetworkParticles';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import {
   checkHealth,
@@ -136,6 +143,7 @@ export default function Index() {
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error'>('synced');
   const [isLoading, setIsLoading] = useState(false);
   const [warningsExpanded, setWarningsExpanded] = useState(true);
+  const [isExportingPng, setIsExportingPng] = useState(false);
   const { toast } = useToast();
 
   // Health check on mount and periodically
@@ -371,6 +379,219 @@ export default function Index() {
     });
   };
 
+  const handleExportPng = useCallback(async () => {
+    if (!diagram.trim()) {
+      toast({
+        title: 'No Diagram',
+        description: 'Generate infrastructure first to export diagram.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingPng(true);
+
+    try {
+      // Step 1: Locate the SVG element in the DOM
+      // The MermaidDiagram component renders SVG directly in its container
+      // Look for SVG in the diagram section (center panel)
+      const diagramSection = document.querySelector('.flex-1.flex.flex-col.min-w-0') || document.body;
+      const svgElement = diagramSection.querySelector('svg') as SVGSVGElement;
+
+      if (!svgElement) {
+        throw new Error('Diagram not found. Please wait for diagram to render.');
+      }
+
+      // Step 2: Clone the SVG to avoid modifying the original
+      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+
+      // Get original dimensions
+      const bbox = svgElement.getBBox();
+      const originalWidth = bbox.width || svgElement.viewBox.baseVal.width || 800;
+      const originalHeight = bbox.height || svgElement.viewBox.baseVal.height || 600;
+
+      // Step 3: Set explicit dimensions and viewBox for clarity
+      clonedSvg.setAttribute('width', originalWidth.toString());
+      clonedSvg.setAttribute('height', originalHeight.toString());
+      clonedSvg.setAttribute('viewBox', `${bbox.x || 0} ${bbox.y || 0} ${originalWidth} ${originalHeight}`);
+
+      // Ensure background is set (Mermaid uses transparent by default)
+      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bgRect.setAttribute('width', '100%');
+      bgRect.setAttribute('height', '100%');
+      bgRect.setAttribute('fill', '#080c14'); // Match dark theme background
+      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
+
+      // Step 4: Serialize SVG to string
+      const serializer = new XMLSerializer();
+      let svgString = serializer.serializeToString(clonedSvg);
+
+      // Add XML declaration and ensure proper encoding
+      svgString = '<?xml version="1.0" encoding="UTF-8"?>' + svgString;
+
+      // Step 5: Create blob from SVG string
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const svgUrl = URL.createObjectURL(svgBlob);
+
+      // Step 6: Create image from SVG
+      const img = new Image();
+
+      // Wait for image to load
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Failed to load SVG as image'));
+        img.src = svgUrl;
+      });
+
+      // Step 7: Calculate high DPI dimensions (3x for high quality)
+      const scale = 3; // 3x for professional print quality
+      const padding = 20; // Add padding for professional appearance
+      const canvasWidth = (originalWidth + padding * 2) * scale;
+      const canvasHeight = (originalHeight + padding * 2) * scale;
+
+      // Step 8: Create canvas and render image
+      const canvas = document.createElement('canvas');
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
+      }
+
+      // Enable image smoothing for better quality
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      // Fill white background with padding
+      ctx.fillStyle = '#080c14'; // Match dark theme
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      // Draw image on canvas with padding at higher resolution
+      ctx.drawImage(img, padding * scale, padding * scale, originalWidth * scale, originalHeight * scale);
+
+      // Clean up SVG URL
+      URL.revokeObjectURL(svgUrl);
+
+      // Step 9: Convert canvas to PNG blob
+      const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error('Failed to create PNG blob'));
+            }
+          },
+          'image/png',
+          1.0 // Maximum quality
+        );
+      });
+
+      // Step 10: Trigger download
+      const downloadUrl = URL.createObjectURL(pngBlob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = 'infrastructure-diagram.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+
+      toast({
+        title: 'Export Successful',
+        description: 'Diagram saved as infrastructure-diagram.png',
+      });
+    } catch (error) {
+      console.error('Export error:', error);
+      toast({
+        title: 'Export Failed',
+        description: error instanceof Error ? error.message : 'Failed to export diagram as PNG',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingPng(false);
+    }
+  }, [diagram, toast]);
+
+  const handleExportSvg = useCallback(() => {
+    if (!diagram.trim()) {
+      toast({
+        title: 'No Diagram',
+        description: 'Generate infrastructure first to export diagram.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      // Locate the SVG element
+      const diagramSection = document.querySelector('.flex-1.flex.flex-col.min-w-0') || document.body;
+      const svgElement = diagramSection.querySelector('svg') as SVGSVGElement;
+
+      if (!svgElement) {
+        throw new Error('Diagram not found. Please wait for diagram to render.');
+      }
+
+      // Clone to avoid modifying original
+      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+
+      // Get dimensions
+      const bbox = svgElement.getBBox();
+      const width = bbox.width || svgElement.viewBox.baseVal.width || 800;
+      const height = bbox.height || svgElement.viewBox.baseVal.height || 600;
+
+      // Add padding for professional appearance
+      const padding = 20;
+      const paddedWidth = width + padding * 2;
+      const paddedHeight = height + padding * 2;
+
+      // Set explicit dimensions
+      clonedSvg.setAttribute('width', paddedWidth.toString());
+      clonedSvg.setAttribute('height', paddedHeight.toString());
+      clonedSvg.setAttribute('viewBox', `${(bbox.x || 0) - padding} ${(bbox.y || 0) - padding} ${paddedWidth} ${paddedHeight}`);
+
+      // Ensure dark background
+      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bgRect.setAttribute('x', (bbox.x || 0) - padding + '');
+      bgRect.setAttribute('y', (bbox.y || 0) - padding + '');
+      bgRect.setAttribute('width', paddedWidth + '');
+      bgRect.setAttribute('height', paddedHeight + '');
+      bgRect.setAttribute('fill', '#080c14');
+      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
+
+      // Serialize to string
+      const serializer = new XMLSerializer();
+      let svgString = serializer.serializeToString(clonedSvg);
+
+      // Add XML declaration
+      svgString = '<?xml version="1.0" encoding="UTF-8"?>' + svgString;
+
+      // Create and download
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'infrastructure-diagram.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: 'Export Successful',
+        description: 'Diagram saved as infrastructure-diagram.svg',
+      });
+    } catch (error) {
+      console.error('SVG export error:', error);
+      toast({
+        title: 'Export Failed',
+        description: error instanceof Error ? error.message : 'Failed to export diagram as SVG',
+        variant: 'destructive',
+      });
+    }
+  }, [diagram, toast]);
+
   return (
     <div className="h-screen flex flex-col bg-background bg-animated-gradient noise overflow-hidden">
       {/* Animated network particles */}
@@ -486,14 +707,37 @@ export default function Index() {
 
         {/* Center Panel - Diagram */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-border/50 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-          <div className="flex items-center gap-3 px-4 py-4 border-b border-border/50 bg-panel-header/50 glass">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 border border-primary/20">
-              <Cloud className="w-4 h-4 text-primary" />
+          <div className="flex items-center justify-between px-4 py-4 border-b border-border/50 bg-panel-header/50 glass">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 border border-primary/20">
+                <Cloud className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Infrastructure Diagram</h2>
+                <p className="text-xs text-muted-foreground">Visual architecture view</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Infrastructure Diagram</h2>
-              <p className="text-xs text-muted-foreground">Visual architecture view</p>
-            </div>
+            {diagram && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportPng}
+                disabled={!diagram || isExportingPng}
+                className="border-border/50 hover:border-primary/50 hover:bg-primary/10 transition-all duration-300"
+              >
+                {isExportingPng ? (
+                  <>
+                    <RotateCw className="w-4 h-4 animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <ImageIcon className="w-4 h-4" />
+                    Export png
+                  </>
+                )}
+              </Button>
+            )}
           </div>
 
           <div className="flex-1 overflow-hidden bg-background/30 scanlines">
