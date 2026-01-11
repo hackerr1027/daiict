@@ -4,7 +4,7 @@ Converts InfrastructureModel to Terraform IaC code.
 This reads from the model, never directly from text or diagrams.
 """
 
-from .model import InfrastructureModel, SubnetType
+from .model import InfrastructureModel, SubnetType, NATGateway, VPCFlowLogs
 
 
 def generate_terraform_code(model: InfrastructureModel) -> str:
@@ -113,6 +113,69 @@ def generate_terraform_code(model: InfrastructureModel) -> str:
                 lines.append(f"  route_table_id = aws_route_table.{subnet.id.replace('-', '_')}_rt.id")
                 lines.append(f"}}")
                 lines.append("")
+                # Generate NAT Gateways and Elastic IPs
+                nat_gateways = getattr(model, 'nat_gateways', [])
+                for nat in nat_gateways:
+                    # Elastic IP (if not provided)
+                    if not nat.elastic_ip:
+                        eip_id = f"eip-{nat.id}"
+                        lines.append(f"# Elastic IP for NAT {nat.id}")
+                        lines.append(f"resource \"aws_eip\" \"{eip_id}\" {{")
+                        lines.append(f"  vpc = true")
+                        lines.append(f"}}")
+                        lines.append("")
+                        nat_eip_ref = f"aws_eip.{eip_id}.id"
+                    else:
+                        nat_eip_ref = f"\"{nat.elastic_ip}\""
+                    lines.append(f"# NAT Gateway {nat.id}")
+                    lines.append(f"resource \"aws_nat_gateway\" \"{nat.id.replace('-', '_')}\" {{")
+                    lines.append(f"  allocation_id = {nat_eip_ref}")
+                    lines.append(f"  subnet_id     = aws_subnet.{nat.subnet_id.replace('-', '_')}.id")
+                    lines.append(f"  tags = {{")
+                    lines.append(f"    Name = \"{nat.name}\"")
+                    lines.append(f"  }}")
+                    lines.append(f"}}")
+                    lines.append("")
+                # Add routes for private subnets via NAT
+                if nat_gateways:
+                    for vpc in model.vpcs:
+                        private_subnets = [s for s in vpc.subnets if s.subnet_type == SubnetType.PRIVATE]
+                        for subnet in private_subnets:
+                            nat = next((n for n in nat_gateways if n.subnet_id.startswith('subnet-public')), None)
+                            if nat:
+                                lines.append(f"# Private route via NAT for {subnet.id}")
+                                lines.append(f"resource \"aws_route_table\" \"{subnet.id.replace('-', '_')}_rt\" {{")
+                                lines.append(f"  vpc_id = aws_vpc.{vpc.id.replace('-', '_')}.id")
+                                lines.append(f"  route {{")
+                                lines.append(f"    cidr_block = \"0.0.0.0/0\"")
+                                lines.append(f"    nat_gateway_id = aws_nat_gateway.{nat.id.replace('-', '_')}.id")
+                                lines.append(f"  }}")
+                                lines.append(f"")
+                                lines.append(f"  tags = {{")
+                                lines.append(f"    Name = \"{subnet.name}-rt\"")
+                                lines.append(f"  }}")
+                                lines.append(f"}}")
+                                lines.append("")
+                                lines.append(f"resource \"aws_route_table_association\" \"{subnet.id.replace('-', '_')}_rta\" {{")
+                                lines.append(f"  subnet_id      = aws_subnet.{subnet.id.replace('-', '_')}.id")
+                                lines.append(f"  route_table_id = aws_route_table.{subnet.id.replace('-', '_')}_rt.id")
+                                lines.append(f"}}")
+                                lines.append("")
+    
+    # Generate VPC Flow Logs
+    flow_logs = getattr(model, 'flow_logs', [])
+    for fl in flow_logs:
+        lines.append(f"# VPC Flow Log {fl.id}")
+        lines.append(f"resource \"aws_flow_log\" \"{fl.id.replace('-', '_')}\" {{")
+        lines.append(f"  log_group_name = \"{fl.log_group_name or fl.id}\"")
+        lines.append(f"  traffic_type   = \"{fl.traffic_type}\"")
+        lines.append(f"  vpc_id         = aws_vpc.{fl.vpc_id.replace('-', '_')}.id")
+        lines.append(f"  log_destination_type = \"{fl.log_destination_type}\"")
+        lines.append(f"  tags = {{")
+        lines.append(f"    Name = \"{fl.id}\"")
+        lines.append(f"  }}")
+        lines.append(f"}}")
+        lines.append("")
     
     # Generate Security Groups
     if model.ec2_instances or model.rds_databases:

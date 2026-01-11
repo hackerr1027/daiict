@@ -9,7 +9,7 @@ Philosophy: Treat correctness as higher priority than creativity.
 from typing import List, Tuple
 from .model import (
     InfrastructureModel, VPC, Subnet, EC2Instance, RDSDatabase, LoadBalancer,
-    SubnetType, InstanceType, DatabaseEngine
+    SubnetType, InstanceType, DatabaseEngine, NATGateway, VPCFlowLogs
 )
 
 
@@ -51,6 +51,9 @@ def validate_and_fix(model: InfrastructureModel) -> Tuple[InfrastructureModel, V
     
     # Rule 4: No floating resources (MANDATORY)
     model = enforce_network_boundaries(model, result)
+    
+    # Rule 5: NAT Gateway and Flow Logs (MANDATORY)
+    model = enforce_nat_and_flow_logs(model, result)
     
     print(f"✅ [Validator] Validation complete: {len(result.corrections)} corrections, {len(result.warnings)} warnings")
     
@@ -246,5 +249,47 @@ def enforce_network_boundaries(model: InfrastructureModel, result: ValidationRes
             print(f"⚠️ [Validator] Load balancer {lb.id} has invalid subnets, assigning to public subnet")
             lb.subnet_ids = [public_subnet.id] if public_subnet else []
             result.add_correction(f"Assigned load balancer '{lb.name}' to valid public subnet - was floating outside network")
-    
+            
     return model
+
+
+# Enforce NAT Gateway presence and Flow Logs
+def enforce_nat_and_flow_logs(model: InfrastructureModel, result: ValidationResult) -> InfrastructureModel:
+    """Ensure NAT Gateways and VPC Flow Logs exist.
+    - If private subnets exist without a NAT Gateway, create one in the first public subnet.
+    - If a VPC lacks flow logs, create a default VPCFlowLogs resource.
+    Auto‑corrections are added to `result`.
+    """
+    if not model.vpcs:
+        return model
+    vpc = model.vpcs[0]
+    # Identify subnets
+    public_subnet = next((s for s in vpc.subnets if s.subnet_type == SubnetType.PUBLIC), None)
+    private_subnets = [s for s in vpc.subnets if s.subnet_type == SubnetType.PRIVATE]
+    # Ensure NAT Gateway
+    nat_gateways = getattr(model, 'nat_gateways', [])
+    if private_subnets and not nat_gateways:
+        if public_subnet:
+            nat = NATGateway(
+                id=f"nat-{vpc.id}",
+                name="auto-nat-gateway",
+                subnet_id=public_subnet.id,
+                elastic_ip=None,
+            )
+            model.add_nat_gateway(nat)
+            result.add_correction("Created NAT Gateway in public subnet to enable outbound traffic for private subnets")
+    # Ensure Flow Logs
+    flow_logs = getattr(model, 'flow_logs', [])
+    if not flow_logs:
+        fl = VPCFlowLogs(
+            id=f"flowlog-{vpc.id}",
+            vpc_id=vpc.id,
+            log_destination_type="cloud-watch-logs",
+            traffic_type="ALL",
+            log_group_name=None,
+        )
+        model.add_flow_logs(fl)
+        result.add_correction("Created VPC Flow Log for VPC to capture network traffic")
+    return model
+
+
