@@ -20,6 +20,7 @@ from .validator import validate_and_fix
 from .model import EditSource
 from .edits import add_resource, remove_resource, move_resource, update_resource_property
 from .terraform_parser import parse_terraform_edits
+from .idi import generate_decision_intelligence
 
 
 # Initialize FastAPI app
@@ -37,6 +38,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8080",      # Local development (Vite)
+        "http://localhost:8081",      # Local development (Vite alternate port)
         "http://localhost:5173",      # Local development (Vite default)
     ] + ([FRONTEND_URL] if FRONTEND_URL else []),
     allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel deployments (production & preview)
@@ -70,6 +72,7 @@ class InfrastructureResponse(BaseModel):
     model_summary: Dict[str, Any]
     model_id: str
     corrections: List[str] = []  # Architecture auto-corrections applied
+    decision_intelligence: Dict[str, Any] = {}  # Infrastructure Decision Intelligence
 
 
 class DiagramEditRequest(BaseModel):
@@ -156,10 +159,25 @@ def generate_infrastructure(request: TextRequest):
         security_warnings = validate_security(model)
         security_report = generate_security_report(security_warnings)
         
+        # Step 6: Generate Infrastructure Decision Intelligence
+        try:
+            decision_report = generate_decision_intelligence(model)
+            decision_intelligence = decision_report.to_dict()
+        except Exception as e:
+            print(f"⚠️ [IDI] Decision intelligence generation failed: {e}")
+            decision_intelligence = {
+                "error": True,
+                "message": "Decision insights temporarily unavailable",
+                "decisions": [],
+                "totalMonthlyCostEstimate": "$0/month",
+                "architectureComplexity": "Unknown",
+                "costBreakdown": []
+            }
+        
         # Store model for edit operations
         MODEL_STORE[model.model_id] = model
         
-        # Step 6: Return combined response with corrections
+        # Step 7: Return combined response with corrections and IDI
         return InfrastructureResponse(
             success=True,
             description=diagram_desc,
@@ -169,7 +187,8 @@ def generate_infrastructure(request: TextRequest):
             security_report=security_report,
             model_summary=model.to_dict(),
             model_id=model.model_id,
-            corrections=validation_result.corrections  # Architecture auto-corrections
+            corrections=validation_result.corrections,  # Architecture auto-corrections
+            decision_intelligence=decision_intelligence  # Infrastructure Decision Intelligence
         )
     
     except Exception as e:

@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Cloud, Zap, Code2, Shield, ChevronDown, ChevronUp, Send, RotateCw, Download, Sparkles, Terminal, Cpu, Check } from 'lucide-react';
+import { Cloud, Zap, Code2, Shield, ChevronDown, ChevronUp, Send, RotateCw, Download, Sparkles, Terminal, Cpu, Check, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { TerraformEditor } from '@/components/TerraformEditor';
 import { WarningsPanel } from '@/components/WarningsPanel';
 import { DiagramControls } from '@/components/DiagramControls';
 import { StatusIndicator } from '@/components/StatusIndicator';
 import { NetworkParticles } from '@/components/NetworkParticles';
+import { DecisionIntelligence } from '@/components/DecisionIntelligence';
 import { useToast } from '@/hooks/use-toast';
 import {
   checkHealth,
@@ -17,6 +19,7 @@ import {
   type InfrastructureResponse,
   type Warning,
   type DiagramEditEvent,
+  type DecisionIntelligence as DecisionIntelligenceType,
 } from '@/services/api';
 
 // Demo/fallback data for when backend is not available
@@ -132,6 +135,8 @@ export default function Index() {
   const [currentModelId, setCurrentModelId] = useState<string | null>(null); // Track model ID for edits
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [corrections, setCorrections] = useState<string[]>([]); // Architecture auto-corrections
+  const [decisionIntelligence, setDecisionIntelligence] = useState<DecisionIntelligenceType | null>(null); // IDI
+  const [rightPanelTab, setRightPanelTab] = useState<'terraform' | 'decisions'>('terraform');
   const [isHealthy, setIsHealthy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error'>('synced');
   const [isLoading, setIsLoading] = useState(false);
@@ -334,11 +339,14 @@ export default function Index() {
 
     setWarnings(response.warnings);
     setCorrections(response.corrections || []); // Store architecture corrections
+    setDecisionIntelligence(response.decisionIntelligence || null); // Store decision intelligence
 
-    // DEBUG: Log corrections to help diagnose display issue
+    // DEBUG: Log corrections and IDI to help diagnose display issue
     console.log('🔧 Corrections received:', response.corrections);
     console.log('🔧 Corrections array length:', (response.corrections || []).length);
     console.log('🔧 Corrections state will be set to:', response.corrections || []);
+    console.log('🎯 Decision Intelligence received:', response.decisionIntelligence);
+    console.log('🎯 Decision count:', (response.decisionIntelligence?.decisions || []).length);
 
     // Extract model ID
     const extractedModelId = response.modelId;
@@ -501,51 +509,67 @@ export default function Index() {
           </div>
         </div>
 
-        {/* Right Panel - Terraform Code */}
+        {/* Right Panel - Terraform Code & Decisions */}
         <div className="w-[480px] flex flex-col glass animate-slide-in-right">{/* CRITICAL: Removed flex-shrink-0 */}
-          <div className="flex items-center justify-between px-4 py-4 border-b border-border/50 bg-panel-header/50">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 border border-primary/20">
-                <Terminal className="w-4 h-4 text-primary" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">Terraform Code</h2>
-                <p className="text-xs text-muted-foreground">Infrastructure as Code</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownload}
-                disabled={!terraform}
-                className="border-border/50 hover:border-primary/50 hover:bg-primary/10 transition-all duration-300"
-              >
-                <Download className="w-4 h-4" />
-                Export .tf
-              </Button>
-              {terraform && (
-                <Button
-                  variant="apply"
-                  size="sm"
-                  onClick={handleApplyTerraform}
-                  disabled={!isHealthy || isLoading}
-                  className="gap-2"
-                >
-                  <Check className="w-4 h-4" />
-                  Apply Changes
-                </Button>
+          <Tabs value={rightPanelTab} onValueChange={(v) => setRightPanelTab(v as 'terraform' | 'decisions')} className="flex flex-col h-full">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-panel-header/50">
+              <TabsList className="grid w-full grid-cols-2 max-w-[300px]">
+                <TabsTrigger value="terraform" className="gap-2">
+                  <Terminal className="w-4 h-4" />
+                  Terraform
+                </TabsTrigger>
+                <TabsTrigger value="decisions" className="gap-2">
+                  <Target className="w-4 h-4" />
+                  Decisions
+                </TabsTrigger>
+              </TabsList>
+
+              {rightPanelTab === 'terraform' && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownload}
+                    disabled={!terraform}
+                    className="border-border/50 hover:border-primary/50 hover:bg-primary/10 transition-all duration-300"
+                  >
+                    <Download className="w-4 h-4" />
+                    Export .tf
+                  </Button>
+                  {terraform && (
+                    <Button
+                      variant="apply"
+                      size="sm"
+                      onClick={handleApplyTerraform}
+                      disabled={!isHealthy || isLoading}
+                      className="gap-2"
+                    >
+                      <Check className="w-4 h-4" />
+                      Apply Changes
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
-          </div>
 
-          <div className="flex-1 overflow-hidden">
-            <TerraformEditor
-              code={terraform}
-              onChange={handleTerraformChange}
-              readOnly={isLoading}
-            />
-          </div>
+            <TabsContent value="terraform" className="flex-1 overflow-hidden m-0">
+              <TerraformEditor
+                code={terraform}
+                onChange={handleTerraformChange}
+                readOnly={isLoading}
+              />
+            </TabsContent>
+
+            <TabsContent value="decisions" className="flex-1 overflow-hidden m-0">
+              {decisionIntelligence ? (
+                <DecisionIntelligence data={decisionIntelligence} />
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  <p className="text-sm">Generate infrastructure to see decision insights</p>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
       </main>
 

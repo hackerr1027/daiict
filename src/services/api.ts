@@ -3,11 +3,32 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+export interface DecisionCard {
+  id: string;
+  title: string;
+  why: string;
+  riskReduced: string;
+  riskLevel: "Low" | "Medium" | "High";
+  tradeoff: string;
+  costImpact: string;
+  confidence: string;
+}
+
+export interface DecisionIntelligence {
+  error?: boolean;
+  message?: string;
+  decisions: DecisionCard[];
+  totalMonthlyCostEstimate: string;
+  architectureComplexity: string;
+  costBreakdown: string[];
+}
+
 export interface InfrastructureResponse {
   diagram: string;
   terraform: string;
   warnings: Warning[];
   corrections?: string[]; // Architecture auto-corrections
+  decisionIntelligence?: DecisionIntelligence; // Infrastructure Decision Intelligence
   modelId?: string;
   model?: any; // Infrastructure model JSON
 }
@@ -65,6 +86,7 @@ export async function generateFromText(text: string): Promise<InfrastructureResp
   console.log('Backend response received, model_id:', data.model_id);
   console.log('🔍 RAW BACKEND RESPONSE:', data);
   console.log('🔍 data.corrections:', data.corrections);
+  console.log('🎯 data.decision_intelligence:', data.decision_intelligence);
 
   const mappedWarnings = (data.security_warnings || []).map((w: any) => ({
     ...w,
@@ -76,6 +98,7 @@ export async function generateFromText(text: string): Promise<InfrastructureResp
     terraform: data.terraform_code,
     warnings: mappedWarnings,
     corrections: data.corrections || [], // Architecture auto-corrections
+    decisionIntelligence: data.decision_intelligence || { decisions: [], totalMonthlyCostEstimate: "$0/month", architectureComplexity: "Unknown", costBreakdown: [] }, // IDI
     modelId: data.model_id,
     model: data.model_summary, // Extract model JSON
   };
