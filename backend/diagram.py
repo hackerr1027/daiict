@@ -43,6 +43,7 @@ def generate_mermaid_diagram(model: InfrastructureModel) -> str:
             lines.append(f"        {lb.id}[\"⚖️ {lb.name}<br/>Application Load Balancer<br/>📍 {az_count} AZs\"]")
             lines.append(f"        style {lb.id} fill:#ffffff,stroke:#f59e0b,stroke-width:3px,color:#000")
     
+    
     # NAT Gateways
     nat_gateways = getattr(model, 'nat_gateways', [])
     if nat_gateways:
@@ -201,4 +202,8 @@ def generate_diagram_description(model: InfrastructureModel) -> str:
     if not parts:
         return "Empty infrastructure"
     
+<<<<<<< HEAD
     return "Tier-based architecture with " + ", ".join(parts)
+=======
+    return "Tier-based architecture with " + ", ".join(parts)
+>>>>>>> 9b7510c85e7d10b729118326e538e63d97fa0468
